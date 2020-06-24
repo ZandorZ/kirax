@@ -1,1 +1,3 @@
-Kirax - A very opianated/experimental state management for Go
+# Kirax
+A very opianated/experimental state management for Go
+
