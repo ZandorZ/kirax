@@ -1,7 +1,7 @@
 package kirax
 
 import (
-	"log"
+	"reflect"
 	"sync"
 	"time"
 
@@ -23,7 +23,8 @@ type Listener map[string]chan SnapShot
 // SnapShot ...
 type SnapShot struct {
 	time.Time
-	Data interface{}
+	Data  interface{}
+	Error error
 }
 
 // NewStore ...
@@ -76,7 +77,10 @@ func (s *Store) GetStateByPath(path string) (interface{}, error) {
 	s.RLock()
 	defer s.RUnlock()
 	value, err := lookup.LookupString(s.state, path)
-	return value.Interface(), err
+	if err != nil {
+		return nil, err
+	}
+	return value.Interface(), nil
 }
 
 // GetState return current state.
@@ -91,16 +95,33 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 
 	defer wg.Done()
 
-	oldV, _ := lookup.LookupString(s.state, path)
-	newV, _ := lookup.LookupString(payload, path)
+	oldV := reflect.ValueOf(s.state)
+	newV := reflect.ValueOf(payload)
+	var err error
+
+	if path != "." && len(path) > 0 {
+		oldV, err = lookup.LookupString(s.state, path)
+		if err != nil {
+			listener <- SnapShot{Error: err}
+			return
+		}
+
+		newV, err = lookup.LookupString(payload, path)
+		if err != nil {
+			listener <- SnapShot{Error: err}
+			return
+		}
+	}
 
 	d, err := diff.NewDiffer(diff.SliceOrdering(true))
 	if err != nil {
-		log.Fatal(err)
+		listener <- SnapShot{Error: err}
+		return
 	}
 	changes, err := d.Diff(oldV.Interface(), newV.Interface())
 	if err != nil {
-		log.Fatal(err)
+		listener <- SnapShot{Error: err}
+		return
 	}
 
 	if len(changes) > 0 {
