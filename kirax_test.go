@@ -1,7 +1,10 @@
 package kirax
 
 import (
+	"log"
+	"math/rand"
 	"testing"
+	"time"
 )
 
 type Address struct {
@@ -15,6 +18,8 @@ type Customer struct {
 	Age                 int
 	Address             Address
 }
+
+type CustomerCollection []Customer
 
 type CustomerStore struct {
 	*Store
@@ -52,5 +57,40 @@ func Test_SetState(t *testing.T) {
 	if curState.Age != 31 {
 		t.Errorf("Age wrong. Expected 31 got: %d", curState.Age)
 	}
+
+}
+
+func Test_GetStateSlice(t *testing.T) {
+
+	store := NewStore(CustomerCollection{c, c})
+
+	list2 := store.AddListener(".")
+
+	done := make(chan bool)
+	ticker1 := time.NewTicker(1 * time.Second)
+	go func() {
+		for range ticker1.C {
+			c.Address.Number += rand.Intn(10)
+			store.SetState(CustomerCollection{c})
+		}
+	}()
+
+	go func() {
+
+		for snap := range list2 {
+
+			if snap.Error != nil {
+				t.Error(snap.Error)
+			} else {
+				log.Println("Changed : ", snap.Data.(CustomerCollection))
+				if snap.Data.(CustomerCollection)[0].Address.Number > 40 {
+					done <- true
+				}
+			}
+		}
+
+	}()
+
+	<-done
 
 }
