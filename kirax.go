@@ -1,12 +1,13 @@
 package kirax
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"reflect"
 	"sync"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/mcuadros/go-lookup"
 	"github.com/modern-go/reflect2"
 	"github.com/r3labs/diff"
@@ -150,14 +151,15 @@ func (s *Store) getStateV() (reflect.Value, error) {
 
 	v := reflect2.TypeOf(state).New()
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-
-	bytes, err := json.Marshal(state)
+	b := new(bytes.Buffer)
+	err := gob.NewEncoder(b).Encode(state)
 	if err != nil {
 		return reflect.Value{}, err
 	}
 
-	err = json.Unmarshal(bytes, v)
+	data := b.Bytes()
+	b = bytes.NewBuffer(data)
+	err = gob.NewDecoder(b).Decode(v)
 	if err != nil {
 		return reflect.Value{}, err
 	}
