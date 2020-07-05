@@ -67,7 +67,9 @@ func (s *Store) AddModifier(action string, modifier Modifier) error {
 	if _, ok := s.modifiers[action]; !ok {
 		s.modifiers[action] = modifier
 	}
-	return nil // TODO modifier already exists
+	return nil
+	// TODO modifier already exists
+	// TODO add more than 1 modifier per action
 }
 
 // AddModifierMethod ...
@@ -104,7 +106,7 @@ func (s *Store) Dispatch(action Action) error {
 
 	if mod, ok := s.modifiers[action.Name]; ok {
 		mod(s.state.Interface(), action.Payload)
-		s.stateCh <- rxgo.Of(s.state.Interface())
+		go func() { s.stateCh <- rxgo.Of(s.state.Interface()) }()
 		return s.checkState(oldV)
 	}
 
@@ -134,7 +136,7 @@ func (s *Store) Dispatch2(action Action) error {
 		} else {
 			mod.Call([]reflect.Value{s.state})
 		}
-		s.stateCh <- rxgo.Of(s.state.Elem().Interface())
+		go func() { s.stateCh <- rxgo.Of(s.state.Elem().Interface()) }()
 		return nil //TODO checkState()
 
 	}
