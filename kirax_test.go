@@ -167,7 +167,11 @@ func Test_Observable(t *testing.T) {
 		fmt.Println("Observable is closed:")
 	})
 
-	context, disposed := onlyAdults.Connect()
+	onlyAdults.DoOnError(func(err error) {
+		fmt.Printf("Observable error: %v", err)
+	})
+
+	context, dispose := onlyAdults.Connect()
 
 	go func() {
 		for i := 0; i < 10; i++ {
@@ -177,10 +181,16 @@ func Test_Observable(t *testing.T) {
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
-		disposed()
+		dispose()
 	}()
 
 	// Wait for the subscription to be done
 	<-context.Done()
+
+	fmt.Println("Done:")
+
+}
+
+func Test_Iterable(t *testing.T) {
 
 }
