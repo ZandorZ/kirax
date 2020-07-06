@@ -11,7 +11,6 @@ import (
 	"github.com/mcuadros/go-lookup"
 	"github.com/modern-go/reflect2"
 	"github.com/r3labs/diff"
-	"github.com/reactivex/rxgo/v2"
 )
 
 // Action ...
@@ -40,14 +39,12 @@ type Store struct {
 	listeners       map[string]Listener
 	modifiers       map[string]Modifier
 	modifierMethods map[string]reflect.Value
-	stateCh         chan rxgo.Item
 }
 
 // NewStore ...
 func NewStore(initState interface{}) *Store {
 	return &Store{
 		state:           reflect.ValueOf(initState), // TODO: check if struct or pointer to struct
-		stateCh:         make(chan rxgo.Item),
 		listeners:       make(map[string]Listener),
 		modifiers:       make(map[string]Modifier),
 		modifierMethods: make(map[string]reflect.Value),
@@ -90,11 +87,6 @@ func (s *Store) AddModifierMethod(action string, modifier interface{}) error {
 	return nil
 }
 
-// NewObservable creates new state observable
-func (s *Store) NewObservable() rxgo.Observable {
-	return rxgo.FromChannel(s.stateCh, rxgo.WithPublishStrategy())
-}
-
 //Dispatch ...
 func (s *Store) Dispatch(action Action) error {
 	s.Lock()
@@ -107,7 +99,6 @@ func (s *Store) Dispatch(action Action) error {
 
 	if mod, ok := s.modifiers[action.Name]; ok {
 		mod(s.state.Interface(), action.Payload)
-		go func() { s.stateCh <- rxgo.Of(s.state.Interface()) }()
 		return s.checkState(oldV)
 	}
 
@@ -137,7 +128,6 @@ func (s *Store) Dispatch2(action Action) error {
 		} else {
 			mod.Call([]reflect.Value{s.state})
 		}
-		go func() { s.stateCh <- rxgo.Of(s.state.Elem().Interface()) }()
 		return nil //TODO checkState()
 
 	}
@@ -146,6 +136,8 @@ func (s *Store) Dispatch2(action Action) error {
 
 // getValeu reflectValue of state copy
 func (s *Store) getStateV() (reflect.Value, error) {
+
+	//TODO singleton/cache
 
 	state := s.state.Elem().Interface()
 
