@@ -99,7 +99,8 @@ func (s *Store) Dispatch(action Action) error {
 
 	if mod, ok := s.modifiers[action.Name]; ok {
 		mod(s.state.Interface(), action.Payload)
-		return s.checkState(oldV)
+		s.checkState(oldV)
+		return nil
 	}
 
 	return fmt.Errorf("Action '%s' not found", action.Name)
@@ -134,7 +135,7 @@ func (s *Store) Dispatch2(action Action) error {
 	return fmt.Errorf("Action '%s' not found", action.Name)
 }
 
-// getValeu reflectValue of state copy
+// getValue reflectValue of state copy
 func (s *Store) getStateV() (reflect.Value, error) {
 
 	//TODO singleton/cache
@@ -170,7 +171,7 @@ func (s *Store) GetState() (interface{}, error) {
 }
 
 // checkState warns listeners for changes
-func (s *Store) checkState(oldState reflect.Value) error {
+func (s *Store) checkState(oldState reflect.Value) {
 
 	var wg sync.WaitGroup
 
@@ -180,8 +181,6 @@ func (s *Store) checkState(oldState reflect.Value) error {
 	}
 
 	wg.Wait()
-
-	return nil
 }
 
 // worker ...
@@ -198,33 +197,40 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 
 		oldV, err = lookup.LookupString(oldState.Interface(), path)
 		if err != nil {
-			listener <- SnapShot{Error: fmt.Errorf("Error finding path in old state: %v", oldV)}
+			s.noBlocking(listener, SnapShot{Error: fmt.Errorf("Error finding path in old state: %v", oldV)})
 			return
 		}
 
 		newV, err = lookup.LookupString(s.state.Interface(), path)
 		if err != nil {
-			listener <- SnapShot{Error: fmt.Errorf("Error finding path in new state: %v", newV)}
+			s.noBlocking(listener, SnapShot{Error: fmt.Errorf("Error finding path in new state: %v", newV)})
 			return
 		}
 	}
 
 	d, err := diff.NewDiffer(diff.SliceOrdering(true))
 	if err != nil {
-		listener <- SnapShot{Error: err}
+		s.noBlocking(listener, SnapShot{Error: err})
 		return
 	}
 
 	changes, err := d.Diff(oldV.Interface(), newV.Interface())
 	if err != nil {
-		listener <- SnapShot{Error: err}
+		s.noBlocking(listener, SnapShot{Error: err})
 		return
 	}
 
 	if len(changes) > 0 {
-		listener <- SnapShot{Time: time.Now(), Data: newV.Interface()}
+		s.noBlocking(listener, SnapShot{Time: time.Now(), Data: newV.Interface()})
 	}
 
 	return
+}
 
+// noBlocking sending to channel
+func (s *Store) noBlocking(listener chan<- SnapShot, snap SnapShot) {
+	select {
+	case listener <- snap:
+	default:
+	}
 }
