@@ -43,7 +43,11 @@ type Store struct {
 
 // NewStore ...
 func NewStore(initState interface{}) *Store {
+
+	// log.Println("type:", reflect.ValueOf(initState).Kind().String())
+
 	return &Store{
+		// TODO: copy from initState????
 		state:           reflect.ValueOf(initState), // TODO: check if struct or pointer to struct
 		listeners:       make(map[string]Listener),
 		modifiers:       make(map[string]Modifier),
@@ -54,6 +58,7 @@ func NewStore(initState interface{}) *Store {
 // AddListener ...
 func (s *Store) AddListener(path string) <-chan SnapShot {
 	// TODO: check if path exist in state struct
+	// TODO: close channel (remove listener)
 	if _, ok := s.listeners[path]; !ok {
 		s.listeners[path] = make(chan SnapShot)
 	}
@@ -61,17 +66,7 @@ func (s *Store) AddListener(path string) <-chan SnapShot {
 }
 
 // AddModifier ...
-func (s *Store) AddModifier(action string, modifier Modifier) error {
-	if _, ok := s.modifiers[action]; !ok {
-		s.modifiers[action] = modifier
-	}
-	return nil
-	// TODO modifier already exists
-	// TODO add more than 1 modifier per action
-}
-
-// AddModifierMethod ...
-func (s *Store) AddModifierMethod(action string, modifier interface{}) error {
+func (s *Store) AddModifier(action string, modifier interface{}) error {
 	mod := reflect.ValueOf(modifier)
 	if !mod.IsValid() {
 		return fmt.Errorf("Modifier is not valid")
@@ -87,27 +82,8 @@ func (s *Store) AddModifierMethod(action string, modifier interface{}) error {
 	return nil
 }
 
-//Dispatch ...
+// Dispatch actions
 func (s *Store) Dispatch(action Action) error {
-	s.Lock()
-	defer s.Unlock()
-
-	oldV, err := s.getStateV()
-	if err != nil {
-		return err
-	}
-
-	if mod, ok := s.modifiers[action.Name]; ok {
-		mod(s.state.Interface(), action.Payload)
-		s.checkState(oldV)
-		return nil
-	}
-
-	return fmt.Errorf("Action '%s' not found", action.Name)
-}
-
-// Dispatch2 ...
-func (s *Store) Dispatch2(action Action) error {
 
 	if mod, ok := s.modifierMethods[action.Name]; ok {
 
@@ -123,15 +99,24 @@ func (s *Store) Dispatch2(action Action) error {
 		// log.Printf("modifier first argument type: %v", mod.Type().In(0).Kind())
 		// log.Printf("payload type: %v", reflect.TypeOf(action.Payload).Kind())
 
+		oldV, err := s.getStateV()
+		if err != nil {
+			return err
+		}
+
 		if action.Payload != nil {
 			args := []reflect.Value{s.state, reflect.ValueOf(action.Payload)}
 			mod.Call(args)
 		} else {
 			mod.Call([]reflect.Value{s.state})
 		}
-		return nil //TODO checkState()
 
+		//check changes
+		s.checkState(oldV)
+
+		return nil
 	}
+
 	return fmt.Errorf("Action '%s' not found", action.Name)
 }
 
@@ -170,6 +155,19 @@ func (s *Store) GetState() (interface{}, error) {
 	return state.Elem().Interface(), err
 }
 
+// GetStateByPath copies the current state path
+func (s *Store) GetStateByPath(path string) (interface{}, error) {
+	state, err := s.getStateV()
+	if err != nil {
+		return nil, err
+	}
+	statePath, err := lookup.LookupString(state.Elem().Interface(), path)
+	if err != nil {
+		return nil, err
+	}
+	return statePath.Interface(), nil
+}
+
 // checkState warns listeners for changes
 func (s *Store) checkState(oldState reflect.Value) {
 
@@ -191,6 +189,7 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 	oldV := oldState
 	newV := s.state
 
+	// not root
 	if path != "/" {
 
 		var err error
@@ -227,7 +226,7 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 	return
 }
 
-// noBlocking sending to channel
+// noBlocking sending to channel listener
 func (s *Store) noBlocking(listener chan<- SnapShot, snap SnapShot) {
 	select {
 	case listener <- snap:
