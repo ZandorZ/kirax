@@ -10,23 +10,23 @@ import (
 	"github.com/r3labs/diff"
 )
 
-// Action ...
+// Action to be dispatched
 type Action struct {
 	Name    string
 	Payload interface{}
 }
 
-// SnapShot ...
+// SnapShot snapshots of values
 type SnapShot struct {
 	When  time.Time
 	Data  interface{}
 	Error error
 }
 
-// Listener ...
+// Listener channel to SnapShot changes
 type Listener chan SnapShot
 
-// Store ...
+// Store main struct
 type Store struct {
 	sync.RWMutex
 	state           reflect.Value // pointer of struct
@@ -59,7 +59,7 @@ func NewStore(initState interface{}) *Store {
 	}
 }
 
-// AddListener ...
+// AddListener returns a channel to changes according to a path
 func (s *Store) AddListener(path string) <-chan SnapShot {
 	if _, ok := s.listeners[path]; !ok {
 		s.listeners[path] = make(chan SnapShot)
@@ -67,7 +67,7 @@ func (s *Store) AddListener(path string) <-chan SnapShot {
 	return s.listeners[path]
 }
 
-// RemoveListener ...
+// RemoveListener removes and close the listener channel
 func (s *Store) RemoveListener(path string) error {
 	if _, ok := s.listeners[path]; ok {
 		close(s.listeners[path])
@@ -77,7 +77,7 @@ func (s *Store) RemoveListener(path string) error {
 	return fmt.Errorf("Listener to '%s' not registered", path)
 }
 
-// AddModifier ...
+// AddModifier adds a func that modifies the state, according to a Action name
 func (s *Store) AddModifier(action string, modifier interface{}) error {
 
 	if _, ok := s.modifierMethods[action]; ok {
@@ -106,7 +106,7 @@ func (s *Store) AddModifier(action string, modifier interface{}) error {
 	return nil
 }
 
-// Dispatch actions
+// Dispatch actions to modify the state
 func (s *Store) Dispatch(action Action) error {
 
 	if mod, ok := s.modifierMethods[action.Name]; ok {
@@ -136,7 +136,6 @@ func (s *Store) Dispatch(action Action) error {
 
 		//clear cache
 		s.cacheState = nil
-
 		//check changes
 		s.checkState(oldV)
 
@@ -163,7 +162,7 @@ func (s *Store) getStateV() (reflect.Value, error) {
 	return reflect.ValueOf(s.cacheState), err
 }
 
-// GetState copies the current state
+// GetState get copy of the current state
 func (s *Store) GetState() (interface{}, error) {
 	state, err := s.getStateV()
 	if err != nil {
@@ -172,7 +171,7 @@ func (s *Store) GetState() (interface{}, error) {
 	return state.Interface(), err
 }
 
-// GetStateByPath copies the current state path
+// GetStateByPath get copies of the current state according to a path
 func (s *Store) GetStateByPath(path string) (interface{}, error) {
 	state, err := s.getStateV()
 	if err != nil {
@@ -197,7 +196,7 @@ func (s *Store) checkState(oldState reflect.Value) {
 	wg.Wait()
 }
 
-// worker ...
+// worker to check changes and warn listeners by their path
 func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot, oldState reflect.Value) {
 
 	defer wg.Done()
