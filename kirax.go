@@ -1,15 +1,12 @@
 package kirax
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
 	"reflect"
 	"sync"
 	"time"
 
 	"github.com/mcuadros/go-lookup"
-	"github.com/modern-go/reflect2"
 	"github.com/r3labs/diff"
 )
 
@@ -21,7 +18,7 @@ type Action struct {
 
 // SnapShot ...
 type SnapShot struct {
-	time.Time
+	When  time.Time
 	Data  interface{}
 	Error error
 }
@@ -29,56 +26,83 @@ type SnapShot struct {
 // Listener ...
 type Listener chan SnapShot
 
-// Modifier ...
-type Modifier func(state interface{}, payload interface{})
-
 // Store ...
 type Store struct {
 	sync.RWMutex
-	state           reflect.Value // reflect.Ptr
+	state           reflect.Value // pointer of struct
+	cacheState      interface{}
 	listeners       map[string]Listener
-	modifiers       map[string]Modifier
 	modifierMethods map[string]reflect.Value
 }
 
-// NewStore ...
+// NewStore creates a new store based on a state
 func NewStore(initState interface{}) *Store {
 
-	// log.Println("type:", reflect.ValueOf(initState).Kind().String())
+	stateKind := reflect.TypeOf(initState).Kind()
+
+	//only struct
+	if stateKind != reflect.Struct {
+		panic(fmt.Errorf("Type %s not allowed, state can only be struct", stateKind.String()))
+	}
+
+	//clone initial state
+	clonedInitial, err := Clone(initState)
+	if err != nil {
+		panic(err)
+	}
 
 	return &Store{
-		// TODO: copy from initState????
-		state:           reflect.ValueOf(initState), // TODO: check if struct or pointer to struct
+		state:           clonedInitial,
+		cacheState:      initState,
 		listeners:       make(map[string]Listener),
-		modifiers:       make(map[string]Modifier),
 		modifierMethods: make(map[string]reflect.Value),
 	}
 }
 
 // AddListener ...
 func (s *Store) AddListener(path string) <-chan SnapShot {
-	// TODO: check if path exist in state struct
-	// TODO: close channel (remove listener)
 	if _, ok := s.listeners[path]; !ok {
 		s.listeners[path] = make(chan SnapShot)
 	}
 	return s.listeners[path]
 }
 
+// RemoveListener ...
+func (s *Store) RemoveListener(path string) error {
+	if _, ok := s.listeners[path]; ok {
+		close(s.listeners[path])
+		delete(s.listeners, path)
+		return nil
+	}
+	return fmt.Errorf("Listener to '%s' not registered", path)
+}
+
 // AddModifier ...
 func (s *Store) AddModifier(action string, modifier interface{}) error {
-	mod := reflect.ValueOf(modifier)
-	if !mod.IsValid() {
+
+	if _, ok := s.modifierMethods[action]; ok {
+		return fmt.Errorf("Modifier '%s' already registered", action)
+	}
+
+	modV := reflect.ValueOf(modifier)
+
+	if !modV.IsValid() {
 		return fmt.Errorf("Modifier is not valid")
 	}
-	if mod.Kind().String() != "func" {
-		return fmt.Errorf("Modifier is not a func")
+
+	if reflect.TypeOf(modifier).Kind() != reflect.Func {
+		return fmt.Errorf("Modifier is not a function")
 	}
-	s.Lock()
-	defer s.Unlock()
-	if _, ok := s.modifiers[action]; !ok {
-		s.modifierMethods[action] = mod
+
+	// no arguments or first argument is not same type of state
+	if modV.Type().NumIn() == 0 || (modV.Type().NumIn() > 0 && modV.Type().In(0) != s.state.Type()) {
+		return fmt.Errorf("Modifier '%s' needs 1st argument to be of type: '%s'", modV.Type().String(), s.state.Type().String())
 	}
+
+	if _, ok := s.modifierMethods[action]; !ok {
+		s.modifierMethods[action] = modV
+	}
+
 	return nil
 }
 
@@ -87,22 +111,21 @@ func (s *Store) Dispatch(action Action) error {
 
 	if mod, ok := s.modifierMethods[action.Name]; ok {
 
-		if action.Payload == nil && mod.Type().NumIn() > 0 {
-			return fmt.Errorf("Calling '%s' with payload nil, but asking %d argument(s)", mod.Type(), mod.Type().NumIn())
+		if action.Payload == nil && mod.Type().NumIn() > 1 {
+			return fmt.Errorf("Calling modifier '%s' with payload nil, but asking %d argument(s)", mod.Type(), mod.Type().NumIn())
 		}
 
-		if action.Payload != nil && mod.Type().NumIn() == 0 {
-			return fmt.Errorf("Calling '%s' with unnecessary payload", mod.Type())
+		if action.Payload != nil && mod.Type().NumIn() == 1 {
+			return fmt.Errorf("Calling modifier '%s' with unnecessary payload: %v", mod.Type(), action.Payload)
 		}
-
-		//TODO: check argument type/kind
-		// log.Printf("modifier first argument type: %v", mod.Type().In(0).Kind())
-		// log.Printf("payload type: %v", reflect.TypeOf(action.Payload).Kind())
 
 		oldV, err := s.getStateV()
 		if err != nil {
 			return err
 		}
+
+		s.Lock()
+		defer s.Unlock()
 
 		if action.Payload != nil {
 			args := []reflect.Value{s.state, reflect.ValueOf(action.Payload)}
@@ -111,39 +134,33 @@ func (s *Store) Dispatch(action Action) error {
 			mod.Call([]reflect.Value{s.state})
 		}
 
+		//clear cache
+		s.cacheState = nil
+
 		//check changes
 		s.checkState(oldV)
 
 		return nil
 	}
 
-	return fmt.Errorf("Action '%s' not found", action.Name)
+	return fmt.Errorf("Action '%s' not registered", action.Name)
 }
 
 // getValue reflectValue of state copy
 func (s *Store) getStateV() (reflect.Value, error) {
 
-	//TODO singleton/cache
+	//do I need this?
+	s.RLock()
+	defer s.RUnlock()
 
-	state := s.state.Elem().Interface()
-
-	v := reflect2.TypeOf(state).New()
-
-	b := new(bytes.Buffer)
-	err := gob.NewEncoder(b).Encode(state)
-	if err != nil {
-		return reflect.Value{}, err
+	var err error
+	var stateV reflect.Value
+	if s.cacheState == nil {
+		stateV, err = Clone(s.state.Elem().Interface())
+		s.cacheState = stateV.Elem().Interface()
 	}
 
-	data := b.Bytes()
-	b = bytes.NewBuffer(data)
-	err = gob.NewDecoder(b).Decode(v)
-	if err != nil {
-		return reflect.Value{}, err
-	}
-
-	return reflect.ValueOf(v), nil
-
+	return reflect.ValueOf(s.cacheState), err
 }
 
 // GetState copies the current state
@@ -152,7 +169,7 @@ func (s *Store) GetState() (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return state.Elem().Interface(), err
+	return state.Interface(), err
 }
 
 // GetStateByPath copies the current state path
@@ -161,7 +178,7 @@ func (s *Store) GetStateByPath(path string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	statePath, err := lookup.LookupString(state.Elem().Interface(), path)
+	statePath, err := lookup.LookupString(state.Interface(), path)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +189,6 @@ func (s *Store) GetStateByPath(path string) (interface{}, error) {
 func (s *Store) checkState(oldState reflect.Value) {
 
 	var wg sync.WaitGroup
-
 	for path, listener := range s.listeners {
 		wg.Add(1)
 		go s.worker(path, &wg, listener, oldState)
@@ -191,9 +207,7 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 
 	// not root
 	if path != "/" {
-
 		var err error
-
 		oldV, err = lookup.LookupString(oldState.Interface(), path)
 		if err != nil {
 			s.noBlocking(listener, SnapShot{Error: fmt.Errorf("Error finding path in old state: %v", oldV)})
@@ -220,7 +234,7 @@ func (s *Store) worker(path string, wg *sync.WaitGroup, listener chan<- SnapShot
 	}
 
 	if len(changes) > 0 {
-		s.noBlocking(listener, SnapShot{Time: time.Now(), Data: newV.Interface()})
+		s.noBlocking(listener, SnapShot{When: time.Now(), Data: newV.Interface()})
 	}
 
 	return
