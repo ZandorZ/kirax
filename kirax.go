@@ -109,6 +109,9 @@ func (s *Store) AddModifier(action string, modifier interface{}) error {
 // Dispatch actions to modify the state
 func (s *Store) Dispatch(action Action) error {
 
+	s.Lock()
+	defer s.Unlock()
+
 	if mod, ok := s.modifierMethods[action.Name]; ok {
 
 		if action.Payload == nil && mod.Type().NumIn() > 1 {
@@ -123,9 +126,6 @@ func (s *Store) Dispatch(action Action) error {
 		if err != nil {
 			return err
 		}
-
-		s.Lock()
-		defer s.Unlock()
 
 		if action.Payload != nil {
 			args := []reflect.Value{s.state, reflect.ValueOf(action.Payload)}
@@ -148,10 +148,6 @@ func (s *Store) Dispatch(action Action) error {
 // getValue reflectValue of state copy
 func (s *Store) getStateV() (reflect.Value, error) {
 
-	//do I need this?
-	s.RLock()
-	defer s.RUnlock()
-
 	var err error
 	var stateV reflect.Value
 	if s.cacheState == nil {
@@ -164,6 +160,8 @@ func (s *Store) getStateV() (reflect.Value, error) {
 
 // GetState get copy of the current state
 func (s *Store) GetState() (interface{}, error) {
+	s.RLock()
+	defer s.RUnlock()
 	state, err := s.getStateV()
 	if err != nil {
 		return nil, err
@@ -173,6 +171,8 @@ func (s *Store) GetState() (interface{}, error) {
 
 // GetStateByPath get copies of the current state according to a path
 func (s *Store) GetStateByPath(path string) (interface{}, error) {
+	s.RLock()
+	defer s.RUnlock()
 	state, err := s.getStateV()
 	if err != nil {
 		return nil, err
