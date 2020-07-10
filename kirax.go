@@ -94,6 +94,12 @@ func (s *Store) AddModifier(action string, modifier interface{}) error {
 		return fmt.Errorf("Modifier is not a function")
 	}
 
+	// no return error
+	errorInterface := reflect.TypeOf((*error)(nil)).Elem()
+	if modV.Type().NumOut() == 0 || !modV.Type().Out(0).Implements(errorInterface) {
+		return fmt.Errorf("Modifier '%s' must return type: error", modV.Type().String())
+	}
+
 	// no arguments or first argument is not same type of state
 	if modV.Type().NumIn() == 0 || (modV.Type().NumIn() > 0 && modV.Type().In(0) != s.state.Type()) {
 		return fmt.Errorf("Modifier '%s' needs 1st argument to be of type: '%s'", modV.Type().String(), s.state.Type().String())
@@ -127,17 +133,22 @@ func (s *Store) Dispatch(action Action) error {
 			return err
 		}
 
+		var returnedError interface{}
 		if action.Payload != nil {
 			args := []reflect.Value{s.state, reflect.ValueOf(action.Payload)}
-			mod.Call(args)
+			returnedError = mod.Call(args)[0].Interface()
 		} else {
-			mod.Call([]reflect.Value{s.state})
+			returnedError = mod.Call([]reflect.Value{s.state})[0].Interface()
 		}
 
 		//clear cache
 		s.cacheState = nil
 		//check changes
 		s.checkState(oldV)
+
+		if returnedError != nil {
+			return returnedError.(error)
+		}
 
 		return nil
 	}
@@ -154,14 +165,13 @@ func (s *Store) getStateV() (reflect.Value, error) {
 		stateV, err = Clone(s.state.Elem().Interface())
 		s.cacheState = stateV.Elem().Interface()
 	}
-
 	return reflect.ValueOf(s.cacheState), err
 }
 
 // GetState get copy of the current state
 func (s *Store) GetState() (interface{}, error) {
-	s.RLock()
-	defer s.RUnlock()
+	s.Lock()
+	defer s.Unlock()
 	state, err := s.getStateV()
 	if err != nil {
 		return nil, err
@@ -171,8 +181,8 @@ func (s *Store) GetState() (interface{}, error) {
 
 // GetStateByPath get copies of the current state according to a path
 func (s *Store) GetStateByPath(path string) (interface{}, error) {
-	s.RLock()
-	defer s.RUnlock()
+	s.Lock()
+	defer s.Unlock()
 	state, err := s.getStateV()
 	if err != nil {
 		return nil, err
@@ -192,7 +202,6 @@ func (s *Store) checkState(oldState reflect.Value) {
 		wg.Add(1)
 		go s.worker(path, &wg, listener, oldState)
 	}
-
 	wg.Wait()
 }
 
