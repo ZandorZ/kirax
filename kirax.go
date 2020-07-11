@@ -112,6 +112,40 @@ func (s *Store) AddModifier(action string, modifier interface{}) error {
 	return nil
 }
 
+// Patch state according to a path
+func (s *Store) Patch(path string, payload interface{}) error {
+	s.Lock()
+	defer s.Unlock()
+
+	oldV, err := s.getStateV()
+	if err != nil {
+		return err
+	}
+
+	targetV, err := lookup.LookupString(s.state.Interface(), path)
+	if err != nil {
+		return fmt.Errorf("Invalid path '%s'", path)
+	}
+
+	//types are different
+	if reflect.TypeOf(payload) != targetV.Type() {
+		return fmt.Errorf("Target path and payload have different types")
+	}
+
+	if targetV.CanSet() {
+
+		targetV.Set(reflect.ValueOf(payload))
+
+		//clear cache
+		s.cacheState = nil
+
+		//check changes
+		s.checkState(oldV)
+	}
+
+	return err
+}
+
 // Dispatch actions to modify the state
 func (s *Store) Dispatch(action Action) error {
 
