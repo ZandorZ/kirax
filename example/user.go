@@ -41,7 +41,6 @@ func CreateNewUser() User {
 
 // UserStore custom store
 type UserStore struct {
-	Cities []string
 	*kirax.Store
 }
 
@@ -49,6 +48,7 @@ type UserStore struct {
 type UserState struct {
 	Users      map[string]User
 	SelectedID string
+	Cities []string
 }
 
 // NewUserStore creates new store
@@ -67,10 +67,8 @@ func (u *UserStore) InitStore() error {
 
 // listenNewCities channel listener to new cities snapshots
 func (u *UserStore) listenNewCities(ch <-chan kirax.SnapShot) {
-	for snap := range ch {
-		u.Lock()
-		u.Cities = snap.Data.([]string)
-		u.Unlock()
+	for snap := range ch {		
+		u.Patch("Cities", snap.Data.([]string)) 
 	}
 }
 

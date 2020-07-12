@@ -78,13 +78,17 @@ func Test_Custom_Store(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			err := userStore.AddUser(CreateNewUser())
 			is.NoErr(err)
-			time.Sleep(300 * time.Millisecond)
 		}
+
+		time.Sleep(1 * time.Second)
 
 		cities, err := userStore.GetStateByPath("Users.Address.City")
 		is.NoErr(err)
 
-		diffs, err := diff.Diff(cities, userStore.Cities)
+		newCities, err := userStore.GetStateByPath("Cities")
+		is.NoErr(err)
+
+		diffs, err := diff.Diff(cities, newCities)
 		is.True(len(diffs) == 0)
 	})
 
